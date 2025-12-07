@@ -5,13 +5,9 @@ const helmet = require('helmet');
 const midtransClient = require('midtrans-client');
 const mongoose = require('mongoose');
 const nodemailer = require('nodemailer');
-// --- PERUBAHAN 1: IMPORT SERVICE MINTING OTOMATIS ---
+// --- IMPORT SERVICE MINTING OTOMATIS ---
 const { mintTicketsAutomatically } = require('./mintingService');
 
-mongoose.connect(MONGO_URI)
-    .then(() => console.log("✅ Terkoneksi ke MongoDB Atlas"))
-    .catch(err => console.error("❌ Gagal koneksi Database:", err));
-    
 // Import Model Database
 const { User, Route, Order, Promo } = require('./models');
 
@@ -21,26 +17,32 @@ app.use(cors());
 app.use(helmet());
 
 // --- [PENTING] KONFIGURASI EMAIL PENGIRIM ---
-// Menggunakan App Password yang baru saja Anda berikan
 const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
-        user: 'naikajaa@gmail.com', // Email Utama Anda
-        pass: 'flyk zdky rmul pluu' // <--- App Password (JANGAN DIGANTI)
+        user: 'naikajaa@gmail.com', 
+        pass: 'flyk zdky rmul pluu' 
     }
 });
 
-// --- KONEKSI DATABASE ---
+// --- KONEKSI DATABASE (DIPERBAIKI) ---
+// Membaca dari Environment Variable di Render
 const MONGO_URI = process.env.MONGO_URI; 
 
-mongoose.connect(MONGO_URI)
-    .then(() => console.log("✅ Terkoneksi ke MongoDB Atlas"))
-    .catch(err => console.error("❌ Gagal koneksi Database:", err));
+if (!MONGO_URI) {
+    console.error("❌ FATAL ERROR: MONGO_URI tidak ditemukan di Environment Variables!");
+    // Jangan crash agar log bisa terbaca, tapi database tidak akan jalan
+} else {
+    mongoose.connect(MONGO_URI)
+        .then(() => console.log("✅ Terkoneksi ke MongoDB Atlas"))
+        .catch(err => console.error("❌ Gagal koneksi Database:", err));
+}
 
-// --- KONFIGURASI MIDTRANS ---
+// --- KONFIGURASI MIDTRANS (DIPERBAIKI) ---
+// Menggunakan nama variabel lingkungan yang benar
 const snap = new midtransClient.Snap({
     isProduction: false,
-    serverKey: process.env.Mid-server-M8knJY1GMKXS4fy4HTUXCa5R
+    serverKey: process.env.MIDTRANS_SERVER_KEY // <--- INI PERBAIKANNYA
 });
 
 // --- DATA STATIS ---
@@ -113,8 +115,10 @@ const seedRoutes = async () => {
         console.log(`✅ Berhasil mengisi ${newRoutes.length} rute ke Database!`);
     } catch (e) { console.log("Gagal Seed:", e); }
 };
-setTimeout(seedRoutes, 3000); 
+// Tunggu koneksi DB sebentar sebelum seed
+setTimeout(seedRoutes, 5000); 
 
+// Web3 Provider (Opsional/Lokal)
 const web3 = new Web3('http://127.0.0.1:7545'); 
 
 // --- API ENDPOINTS ---
@@ -279,9 +283,9 @@ app.post('/midtrans-notification', async (req, res) => {
         if (updatedOrder) {
             console.log(`✅ Database Updated: ${orderId} jadi ${orderStatus}`);
             
-            // --- PERUBAHAN 2: BLOCKCHAIN MINTING OTOMATIS JIKA STATUS LUNAS ---
+            // --- BLOCKCHAIN MINTING OTOMATIS JIKA STATUS LUNAS ---
             if (orderStatus === 'LUNAS') {
-                let currentStatus = 'LUNAS'; // Status awal di DB setelah Midtrans
+                let currentStatus = 'LUNAS'; 
                 
                 try {
                     // 1. Ambil walletAddress dari database User
@@ -290,16 +294,14 @@ app.post('/midtrans-notification', async (req, res) => {
 
                     if (recipientWalletAddress) {
                         const recipients = [recipientWalletAddress];
-                        // Buat URI unik berdasarkan Order ID
                         const tokenURI = `https://api.naikajaa.com/tickets/metadata/${updatedOrder.orderId_Midtrans}`;
                         
                         console.log(`[BLOCKCHAIN] Memulai Minting Otomatis untuk Order ID: ${updatedOrder.orderId_Midtrans}`);
                         const hash = await mintTicketsAutomatically(recipients, tokenURI);
                         
-                        finalTxHash = hash; // Simpan hash transaksi blockchain
-                        currentStatus = 'MINTED'; // Ubah status setelah minting sukses
+                        finalTxHash = hash; 
+                        currentStatus = 'MINTED'; 
                         
-                        // Update status terakhir di database dan simpan hash
                         await Order.updateOne(
                             { orderId_Midtrans: updatedOrder.orderId_Midtrans },
                             { $set: { status: currentStatus, hash: hash } }
@@ -307,26 +309,24 @@ app.post('/midtrans-notification', async (req, res) => {
                         console.log(`[BLOCKCHAIN] Minting Sukses! Hash: ${hash}. Status DB diubah ke MINTED.`);
 
                     } else {
-                        // Jika tidak ada wallet, biarkan status LUNAS, log error
                         console.error(`[BLOCKCHAIN ERROR] Alamat wallet tidak ditemukan untuk user: ${updatedOrder.email}. Minting dilewati.`);
                     }
                 } catch (e) {
-                    // Jika minting gagal (misal: Gas habis / RPC error)
                     finalTxHash = 'TRANSACTION_FAILED';
-                    currentStatus = 'LUNAS_MINT_FAILED'; // Status yang bisa dicoba ulang (retry)
+                    currentStatus = 'LUNAS_MINT_FAILED';
                     await Order.updateOne(
                         { orderId_Midtrans: updatedOrder.orderId_Midtrans },
-                        { $set: { status: currentStatus, hash: finalTxHash } } // Simpan status gagal
+                        { $set: { status: currentStatus, hash: finalTxHash } }
                     );
                     console.error(`[BLOCKCHAIN FATAL ERROR] Minting gagal: ${e.message}. Status diubah ke ${currentStatus}.`);
                 }
                 
-                // --- KIRIM EMAIL JIKA STATUS LUNAS (atau MINTED) ---
+                // --- KIRIM EMAIL ---
                 console.log("📧 Mengirim E-Ticket ke:", updatedOrder.email);
 
                 const mailOptions = {
                     from: '"NaikAjaa Official" <naikajaa@gmail.com>',
-                    to: updatedOrder.email, // Ke Email User
+                    to: updatedOrder.email, 
                     subject: `E-Ticket Terbit: ${updatedOrder.orderId_Midtrans}`,
                     html: `
                         <div style="font-family: sans-serif; max-width: 600px; margin: auto; border: 1px solid #e0e0e0; border-radius: 10px; overflow: hidden;">
