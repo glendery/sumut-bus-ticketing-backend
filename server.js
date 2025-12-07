@@ -7,7 +7,6 @@ const mongoose = require('mongoose');
 const nodemailer = require('nodemailer');
 // --- PERUBAHAN 1: IMPORT SERVICE MINTING OTOMATIS ---
 const { mintTicketsAutomatically } = require('./mintingService');
-const MONGO_URI = process.env.MONGO_URI; 
 
 mongoose.connect(MONGO_URI)
     .then(() => console.log("✅ Terkoneksi ke MongoDB Atlas"))
@@ -30,6 +29,9 @@ const transporter = nodemailer.createTransport({
         pass: 'flyk zdky rmul pluu' // <--- App Password (JANGAN DIGANTI)
     }
 });
+
+// --- KONEKSI DATABASE ---
+const MONGO_URI = process.env.MONGO_URI; 
 
 mongoose.connect(MONGO_URI)
     .then(() => console.log("✅ Terkoneksi ke MongoDB Atlas"))
