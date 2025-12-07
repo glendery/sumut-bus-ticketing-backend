@@ -31,9 +31,6 @@ const transporter = nodemailer.createTransport({
     }
 });
 
-// --- KONEKSI DATABASE ---
-const MONGO_URI = 'mongodb+srv://admin:admin1234@dbtiket.bbrflhr.mongodb.net/?appName=dbtiket';
-
 mongoose.connect(MONGO_URI)
     .then(() => console.log("✅ Terkoneksi ke MongoDB Atlas"))
     .catch(err => console.error("❌ Gagal koneksi Database:", err));
