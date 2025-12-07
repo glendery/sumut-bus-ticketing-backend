@@ -41,7 +41,7 @@ mongoose.connect(MONGO_URI)
 // --- KONFIGURASI MIDTRANS ---
 const snap = new midtransClient.Snap({
     isProduction: false,
-    serverKey: 'Mid-server-M8knJY1GMKXS4fy4HTUXCa5R' // Sesuai Dashboard Sandbox Anda
+    serverKey: process.env.Mid-server-M8knJY1GMKXS4fy4HTUXCa5R
 });
 
 // --- DATA STATIS ---
