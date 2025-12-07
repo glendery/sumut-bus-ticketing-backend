@@ -1,0 +1,401 @@
+const express = require('express');
+const Web3 = require('web3');
+const cors = require('cors');
+const helmet = require('helmet');
+const midtransClient = require('midtrans-client');
+const mongoose = require('mongoose');
+const nodemailer = require('nodemailer');
+// --- PERUBAHAN 1: IMPORT SERVICE MINTING OTOMATIS ---
+const { mintTicketsAutomatically } = require('./mintingService');
+const MONGO_URI = process.env.MONGO_URI; 
+
+mongoose.connect(MONGO_URI)
+    .then(() => console.log("✅ Terkoneksi ke MongoDB Atlas"))
+    .catch(err => console.error("❌ Gagal koneksi Database:", err));
+    
+// Import Model Database
+const { User, Route, Order, Promo } = require('./models');
+
+const app = express();
+app.use(express.json());
+app.use(cors());
+app.use(helmet());
+
+// --- [PENTING] KONFIGURASI EMAIL PENGIRIM ---
+// Menggunakan App Password yang baru saja Anda berikan
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        user: 'naikajaa@gmail.com', // Email Utama Anda
+        pass: 'flyk zdky rmul pluu' // <--- App Password (JANGAN DIGANTI)
+    }
+});
+
+// --- KONEKSI DATABASE ---
+const MONGO_URI = 'mongodb+srv://admin:admin1234@dbtiket.bbrflhr.mongodb.net/?appName=dbtiket';
+
+mongoose.connect(MONGO_URI)
+    .then(() => console.log("✅ Terkoneksi ke MongoDB Atlas"))
+    .catch(err => console.error("❌ Gagal koneksi Database:", err));
+
+// --- KONFIGURASI MIDTRANS ---
+const snap = new midtransClient.Snap({
+    isProduction: false,
+    serverKey: 'Mid-server-M8knJY1GMKXS4fy4HTUXCa5R' // Sesuai Dashboard Sandbox Anda
+});
+
+// --- DATA STATIS ---
+const locationData = {
+    "Medan": {
+        loket: ["Loket Amplas (Jl. SM Raja KM 6,5)", "Loket Pinang Baris", "Pool ALS Pusat", "Pool Makmur", "Loket Ringroad"],
+        turun: ["Terminal Terpadu Amplas", "Simpang Pos", "Ringroad City Walk", "Terminal Pinang Baris", "Lapangan Merdeka"]
+    },
+    "Pematang Siantar": { loket: ["Terminal Tanjung Pinggir", "Loket Parluasan"], turun: ["Terminal Tanjung Pinggir", "Simpang Dua", "Ramayana"] },
+    "Parapat": { loket: ["Loket Pelabuhan Ajibata"], turun: ["Pelabuhan Tiga Raja", "Hotel Niagara", "Pantai Bebas"] },
+    "Balige": { loket: ["Loket Bundaran", "Loket Soposurung"], turun: ["Pasar Balige", "Simpang Siborong-borong", "Pantai Bulbul"] },
+    "Tarutung": { loket: ["Terminal Madya Tarutung"], turun: ["Simpang 4 Hutabarat", "Pemandian Air Soda"] },
+    "Sibolga": { loket: ["Terminal Tipe A Sibolga"], turun: ["Pelabuhan Sambas", "Pantai Pandan", "Pusat Kota"] },
+    "Berastagi": { loket: ["Loket Tugu Jeruk"], turun: ["Tugu Perjuangan", "Pasar Buah", "Hillpark Sibolangit"] },
+    "Kualanamu": { loket: ["Shelter Bus Bandara"], turun: ["Drop-off Keberangkatan"] },
+    "Silangit": { loket: ["Shelter Damri"], turun: ["Gerbang Kedatangan"] }
+};
+
+const armadas = [
+    { name: "ALS", type: "Executive AC", seats: 40, price: 180000, cat: "BUS", img: "/logos/ALS.jpeg", fasilitas: ["Toilet", "Selimut"], deskripsi: "Raja jalanan lintas Sumatera." },
+    { name: "Makmur", type: "Super Executive", seats: 28, price: 230000, cat: "BUS", img: "/logos/Makmur.jpg", fasilitas: ["Leg Rest", "Snack"], deskripsi: "Kenyamanan maksimal." },
+    { name: "Sejahtera", type: "Patas AC", seats: 45, price: 50000, cat: "BUS", img: "/logos/Sejahtera.jpg", fasilitas: ["AC"], deskripsi: "Cepat dan Murah." },
+    { name: "KBT Travel", type: "Hiace", seats: 10, price: 160000, cat: "TRAVEL", img: "/logos/KBT.jpg", fasilitas: ["Captain Seat"], deskripsi: "Travel Premium." },
+    { name: "Sampri", type: "Innova", seats: 7, price: 180000, cat: "TRAVEL", img: "/logos/Sampri.jpg", fasilitas: ["Private"], deskripsi: "Serasa mobil pribadi." }
+];
+
+// --- SEEDING DATA RUTE OTOMATIS ---
+const seedRoutes = async () => {
+    try {
+        const count = await Route.countDocuments();
+        if (count > 0) return;
+
+        console.log("⚙️ Database kosong, mengisi data rute otomatis...");
+        const routePairs = [
+            { asal: "Medan", tujuan: "Pematang Siantar", jarak: "Dekat" },
+            { asal: "Medan", tujuan: "Parapat", jarak: "Sedang" },
+            { asal: "Medan", tujuan: "Balige", jarak: "Jauh" },
+            { asal: "Medan", tujuan: "Berastagi", jarak: "Dekat" },
+            { asal: "Medan", tujuan: "Sibolga", jarak: "Sangat Jauh" },
+            { asal: "Silangit", tujuan: "Parapat", jarak: "Dekat" }
+        ];
+        const jamKeberangkatan = ["08:00", "10:00", "14:00", "20:00"];
+        
+        let idCounter = 1;
+        const newRoutes = [];
+
+        routePairs.forEach(pair => {
+            armadas.forEach(op => {
+                jamKeberangkatan.forEach(jam => {
+                    const pickupPoints = locationData[pair.asal]?.loket || ["Terminal Pusat"];
+                    const dropPoints = locationData[pair.tujuan]?.turun || ["Terminal Pusat"];
+                    let realPrice = op.price;
+                    if (pair.jarak === "Dekat") realPrice = op.price * 0.4;
+                    if (pair.jarak === "Sedang") realPrice = op.price * 0.6;
+                    realPrice = Math.ceil(realPrice / 5000) * 5000;
+
+                    newRoutes.push({
+                        id: idCounter++,
+                        asal: pair.asal, tujuan: pair.tujuan,
+                        operator: op.name, tipe: op.type, jam: jam,
+                        harga: realPrice, kategori: op.cat, image: op.img,
+                        fasilitas: op.fasilitas, kapasitas: op.seats, deskripsi: op.deskripsi,
+                        titik_jemput: pickupPoints, titik_turun: dropPoints
+                    });
+                });
+            });
+        });
+        
+        await Route.insertMany(newRoutes);
+        console.log(`✅ Berhasil mengisi ${newRoutes.length} rute ke Database!`);
+    } catch (e) { console.log("Gagal Seed:", e); }
+};
+setTimeout(seedRoutes, 3000); 
+
+const web3 = new Web3('http://127.0.0.1:7545'); 
+
+// --- API ENDPOINTS ---
+
+app.post('/register', async (req, res) => {
+    try {
+        const { nama, email, password } = req.body;
+        const existingUser = await User.findOne({ email });
+        if (existingUser) return res.status(400).json({ pesan: "Email sudah terdaftar!" });
+
+        const newWallet = web3.eth.accounts.create();
+        const newUser = new User({
+            nama, email, password,
+            walletAddress: newWallet.address,
+            walletPrivateKey: newWallet.privateKey,
+            role: email.includes('admin') ? 'admin' : 'user'
+        });
+        
+        await newUser.save();
+        res.json({ status: "OK", pesan: "Registrasi Berhasil" });
+    } catch (err) { res.status(500).json({ pesan: err.message }); }
+});
+
+app.post('/login', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        const user = await User.findOne({ email, password });
+        if (!user) return res.status(401).json({ pesan: "Email atau Password salah" });
+        const uData = user.toObject();
+        delete uData.password; delete uData.walletPrivateKey;
+        res.json({ status: "OK", user: uData });
+    } catch (err) { res.status(500).json({ pesan: "Server Error" }); }
+});
+
+app.get('/rute', async (req, res) => {
+    try {
+        const { tanggal, asal, tujuan, lokasi, turun } = req.query;
+        let query = {};
+        if (asal) query.asal = { $regex: asal, $options: 'i' };
+        if (tujuan) query.tujuan = { $regex: tujuan, $options: 'i' };
+        if (lokasi && lokasi !== "SEMUA") query.titik_jemput = lokasi;
+        if (turun && turun !== "SEMUA") query.titik_turun = turun;
+
+        const rutes = await Route.find(query).limit(50);
+        const targetDate = tanggal || "DEFAULT";
+        
+        const results = await Promise.all(rutes.map(async (r) => {
+            const orders = await Order.find({ 
+                rute: `${r.asal} - ${r.tujuan}`, operator: r.operator,
+                jam: r.jam, tanggal: targetDate, status: { $ne: 'CANCEL' } 
+            });
+            const sisa = r.kapasitas - orders.length;
+            return { ...r.toObject(), sisaKursi: sisa, bookedSeats: orders.map(o=>o.seatNumber), isFull: sisa <= 0 };
+        }));
+
+        res.json(results);
+    } catch (err) { res.status(500).json([]); }
+});
+
+app.get('/info-lokasi', (req, res) => {
+    const { kota, tipe } = req.query; 
+    if (!kota || !tipe) return res.json([]);
+    const mappedTipe = tipe === 'jemput' ? 'loket' : tipe; 
+    const dataKota = locationData[Object.keys(locationData).find(k => k.toLowerCase() === kota.toLowerCase())];
+    if (dataKota && dataKota[mappedTipe]) res.json(dataKota[mappedTipe]); else res.json([]);
+});
+app.get('/kota', (req, res) => { res.json(Object.keys(locationData)); });
+
+app.post('/beli', async (req, res) => {
+    try {
+        const { idRute, emailUser, tanggal, promoCode, seatNumber, lokasiTurun, lokasiJemput, namaPenumpang, nikPenumpang } = req.body;
+        const user = await User.findOne({ email: emailUser });
+        
+        let rute = await Route.findOne({ id: idRute }); 
+        if (!rute && mongoose.isValidObjectId(idRute)) rute = await Route.findById(idRute);
+
+        if (!user || !rute) return res.status(404).json({ pesan: "Data tidak valid" });
+
+        const isTaken = await Order.findOne({
+            rute: `${rute.asal} - ${rute.tujuan}`, operator: rute.operator,
+            jam: rute.jam, tanggal: tanggal, seatNumber: seatNumber, status: { $ne: 'CANCEL' }
+        });
+        if (isTaken) return res.status(400).json({ pesan: `Kursi No. ${seatNumber} sudah dipesan!` });
+
+        let finalPrice = rute.harga;
+        let discountAmount = 0;
+        if (promoCode) {
+            const promo = await Promo.findOne({ code: promoCode, active: true, quota: { $gt: 0 } });
+            if (promo) { discountAmount = promo.discount; finalPrice = Math.max(0, rute.harga - discountAmount); }
+        }
+
+        const orderId = `TIKET-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        let parameter = {
+            transaction_details: { order_id: orderId, gross_amount: finalPrice },
+            credit_card: { secure: true },
+            customer_details: { first_name: namaPenumpang, email: emailUser, phone: nikPenumpang },
+            item_details: [{ id: rute.id ? rute.id.toString() : "RUTE-001", price: finalPrice, quantity: 1, name: `${rute.operator} Trip` }]
+        };
+
+        const transaction = await snap.createTransaction(parameter);
+
+        const newOrder = new Order({
+            orderId_Midtrans: orderId,
+            snap_token: transaction.token, // Simpan token
+            email: user.email, idRute: rute.id,
+            rute: `${rute.asal} - ${rute.tujuan}`, operator: rute.operator,
+            jam: rute.jam, tanggal, hargaAsli: rute.harga, diskon: discountAmount, totalBayar: finalPrice,
+            tipe: rute.tipe, status: "PENDING", kategori: rute.kategori, seatNumber,
+            lokasi_jemput: lokasiJemput, lokasi_turun: lokasiTurun,
+            namaPenumpang, nikPenumpang
+        });
+        await newOrder.save();
+
+        if (discountAmount > 0) await Promo.updateOne({ code: promoCode }, { $inc: { quota: -1 } });
+
+        res.json({ status: "OK", token: transaction.token, orderId: orderId });
+
+    } catch (err) {
+        console.log("Error Beli:", err.message);
+        res.status(500).json({ pesan: "Gagal memproses pesanan", error: err.message });
+    }
+});
+
+app.get('/orders/:email', async (req, res) => {
+    try { const orders = await Order.find({ email: req.params.email }).sort({ createdAt: -1 }); res.json(orders); } 
+    catch (err) { res.status(500).json([]); }
+});
+
+app.post('/admin/add-route', async (req, res) => {
+    try {
+        const newRoute = new Route({ id: Date.now(), ...req.body, harga: parseInt(req.body.harga), kapasitas: 10 });
+        await newRoute.save(); res.json({ status: "OK" });
+    } catch (err) { res.status(500).json({ pesan: err.message }); }
+});
+
+// --- [ENDPOINT PENTING] WEBHOOK + EMAIL OTOMATIS ---
+app.post('/midtrans-notification', async (req, res) => {
+    try {
+        const statusResponse = await snap.transaction.notification(req.body);
+        const orderId = statusResponse.order_id;
+        const transactionStatus = statusResponse.transaction_status;
+        const fraudStatus = statusResponse.fraud_status;
+
+        console.log(`🔔 Notifikasi Masuk: Order ${orderId} statusnya ${transactionStatus}`);
+        let orderStatus = 'PENDING';
+
+        if (transactionStatus == 'capture') {
+            if (fraudStatus == 'challenge') { orderStatus = 'CHALLENGE'; } 
+            else if (fraudStatus == 'accept') { orderStatus = 'LUNAS'; }
+        } else if (transactionStatus == 'settlement') { orderStatus = 'LUNAS'; } 
+        else if (transactionStatus == 'cancel' || transactionStatus == 'deny' || transactionStatus == 'expire') { orderStatus = 'GAGAL'; } 
+        else if (transactionStatus == 'pending') { orderStatus = 'PENDING'; }
+
+        const updatedOrder = await Order.findOneAndUpdate(
+            { orderId_Midtrans: orderId },
+            { status: orderStatus },
+            { new: true }
+        );
+        
+        let finalTxHash = null;
+
+        if (updatedOrder) {
+            console.log(`✅ Database Updated: ${orderId} jadi ${orderStatus}`);
+            
+            // --- PERUBAHAN 2: BLOCKCHAIN MINTING OTOMATIS JIKA STATUS LUNAS ---
+            if (orderStatus === 'LUNAS') {
+                let currentStatus = 'LUNAS'; // Status awal di DB setelah Midtrans
+                
+                try {
+                    // 1. Ambil walletAddress dari database User
+                    const userForMint = await User.findOne({ email: updatedOrder.email });
+                    const recipientWalletAddress = userForMint ? userForMint.walletAddress : null;
+
+                    if (recipientWalletAddress) {
+                        const recipients = [recipientWalletAddress];
+                        // Buat URI unik berdasarkan Order ID
+                        const tokenURI = `https://api.naikajaa.com/tickets/metadata/${updatedOrder.orderId_Midtrans}`;
+                        
+                        console.log(`[BLOCKCHAIN] Memulai Minting Otomatis untuk Order ID: ${updatedOrder.orderId_Midtrans}`);
+                        const hash = await mintTicketsAutomatically(recipients, tokenURI);
+                        
+                        finalTxHash = hash; // Simpan hash transaksi blockchain
+                        currentStatus = 'MINTED'; // Ubah status setelah minting sukses
+                        
+                        // Update status terakhir di database dan simpan hash
+                        await Order.updateOne(
+                            { orderId_Midtrans: updatedOrder.orderId_Midtrans },
+                            { $set: { status: currentStatus, hash: hash } }
+                        );
+                        console.log(`[BLOCKCHAIN] Minting Sukses! Hash: ${hash}. Status DB diubah ke MINTED.`);
+
+                    } else {
+                        // Jika tidak ada wallet, biarkan status LUNAS, log error
+                        console.error(`[BLOCKCHAIN ERROR] Alamat wallet tidak ditemukan untuk user: ${updatedOrder.email}. Minting dilewati.`);
+                    }
+                } catch (e) {
+                    // Jika minting gagal (misal: Gas habis / RPC error)
+                    finalTxHash = 'TRANSACTION_FAILED';
+                    currentStatus = 'LUNAS_MINT_FAILED'; // Status yang bisa dicoba ulang (retry)
+                    await Order.updateOne(
+                        { orderId_Midtrans: updatedOrder.orderId_Midtrans },
+                        { $set: { status: currentStatus, hash: finalTxHash } } // Simpan status gagal
+                    );
+                    console.error(`[BLOCKCHAIN FATAL ERROR] Minting gagal: ${e.message}. Status diubah ke ${currentStatus}.`);
+                }
+                
+                // --- KIRIM EMAIL JIKA STATUS LUNAS (atau MINTED) ---
+                console.log("📧 Mengirim E-Ticket ke:", updatedOrder.email);
+
+                const mailOptions = {
+                    from: '"NaikAjaa Official" <naikajaa@gmail.com>',
+                    to: updatedOrder.email, // Ke Email User
+                    subject: `E-Ticket Terbit: ${updatedOrder.orderId_Midtrans}`,
+                    html: `
+                        <div style="font-family: sans-serif; max-width: 600px; margin: auto; border: 1px solid #e0e0e0; border-radius: 10px; overflow: hidden;">
+                            <div style="background: #1E3A8A; padding: 20px; text-align: center; color: white;">
+                                <h2 style="margin: 0;">NaikAjaa</h2>
+                                <p style="margin: 5px 0 0; font-size: 14px;">E-Ticket Perjalanan Anda</p>
+                            </div>
+                            
+                            <div style="padding: 20px;">
+                                <p>Halo <b>${updatedOrder.namaPenumpang}</b>,</p>
+                                <p>Pembayaran berhasil! Berikut adalah detail tiket Anda:</p>
+                                
+                                <div style="background: #f8fafc; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                                    <table style="width: 100%;">
+                                        <tr>
+                                            <td style="color: #64748b; font-size: 12px;">Rute</td>
+                                            <td style="font-weight: bold; text-align: right;">${updatedOrder.rute}</td>
+                                        </tr>
+                                        <tr>
+                                            <td style="color: #64748b; font-size: 12px;">Operator</td>
+                                            <td style="font-weight: bold; text-align: right;">${updatedOrder.operator}</td>
+                                        </tr>
+                                        <tr>
+                                            <td style="color: #64748b; font-size: 12px;">Jadwal</td>
+                                            <td style="font-weight: bold; text-align: right;">${updatedOrder.tanggal} | ${updatedOrder.jam} WIB</td>
+                                        </tr>
+                                        <tr>
+                                            <td style="color: #64748b; font-size: 12px;">Kursi</td>
+                                            <td style="font-weight: bold; text-align: right; color: #E11D48;">No. ${updatedOrder.seatNumber}</td>
+                                        </tr>
+                                        <tr>
+                                            <td style="color: #64748b; font-size: 12px;">Hash Tiket (Blockchain)</td>
+                                            <td style="font-weight: bold; text-align: right; font-size: 10px;">${finalTxHash || 'PENDING_MINT'}</td>
+                                        </tr>
+                                    </table>
+                                </div>
+
+                                <div style="text-align: center; margin: 30px 0;">
+                                    <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${finalTxHash || 'VALID'}" style="border: 5px solid white; box-shadow: 0 5px 15px rgba(0,0,0,0.1);" />
+                                    <p style="font-size: 12px; color: #94a3b8; margin-top: 10px;">Scan QR Code ini saat naik bus/travel</p>
+                                </div>
+                            </div>
+                            
+                            <div style="background: #f1f5f9; padding: 15px; text-align: center; font-size: 12px; color: #64748b;">
+                                &copy; 2025 NaikAjaa. Butuh bantuan? Balas email ini.
+                            </div>
+                        </div>
+                    `
+                };
+
+                transporter.sendMail(mailOptions, (err, info) => {
+                    if (err) {
+                        console.error("❌ Gagal kirim email:", err.message);
+                    } else {
+                        console.log("✅ Email terkirim sukses:", info.response);
+                    }
+                });
+            }
+
+        } else {
+            console.log(`❌ Order tidak ditemukan: ${orderId}`);
+        }
+        res.status(200).send('OK');
+
+    } catch (err) {
+        console.log("Webhook Error:", err.message);
+        res.status(500).send('Error');
+    }
+});
+
+app.listen(3000, () => console.log('🚀 Server MongoDB + Midtrans Ready di Port 3000'));
