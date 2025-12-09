@@ -15,47 +15,37 @@ const BATCH_MINT_ABI = [
 
 async function mintTicketsAutomatically(recipients, tokenURI) {
     if (!OWNER_PRIVATE_KEY || !RPC_ENDPOINT_URL) {
-        console.error("❌ ERROR: Kunci di file .env belum terisi.");
+        console.error("❌ ERROR: Kunci belum lengkap.");
         return;
     }
 
     try {
         const provider = new ethers.JsonRpcProvider(RPC_ENDPOINT_URL);
-        const feeData = await provider.getFeeData();
-        const gasPrice = feeData.gasPrice; 
+        // Hapus getFeeData agar lebih cepat (biarkan default/auto)
         
         const wallet = new ethers.Wallet(OWNER_PRIVATE_KEY, provider);
-
-        // INSTANSIASI KONTRAK MENGGUNAKAN HUMAN-READABLE ABI
         const busTicketContract = new ethers.Contract(CONTRACT_ADDRESS, BATCH_MINT_ABI, wallet);
 
-        console.log(`\n--- MEMULAI BATCH MINTING ---`);
-        console.log(`Pengirim (Owner): ${wallet.address}`);
-        console.log(`Jumlah Tiket: ${recipients.length}`);
+        console.log(`[CEPAT] Mengirim Transaksi Batch Minting...`);
 
+        // Panggil fungsi tanpa menunggu 'gas estimation' yang lama
         const tx = await busTicketContract.batchMintTicket(
             recipients,
-            tokenURI,
-            { 
-                gasPrice: gasPrice // Harga gas yang disarankan
-            }
+            tokenURI
         );
 
-        console.log(`Transaksi dikirim. Hash: ${tx.hash}`);
-        await tx.wait();
-
-        console.log(`\n✅ BATCH MINTING SUKSES!`);
-        console.log(`Tiket dicetak di Blockchain. Cek Hash: ${tx.hash}`);
+        console.log(`Transaksi Terkirim! Hash: ${tx.hash}`);
         
+        // ⚠️ PERUBAHAN PENTING:
+        // KITA HAPUS BARIS INI: await tx.wait(); 
+        // Agar Vercel tidak timeout menunggu blockchain.
+        
+        return tx.hash; // Langsung kembalikan Hash saat itu juga
+
     } catch (error) {
-        console.error("\n❌ BATCH MINTING GAGAL.");
-        if (error.code === 'INSUFFICIENT_FUNDS') {
-            console.error("Detail Error: Saldo Sepolia ETH Owner tidak cukup. Mohon minta lagi dari Faucet.");
-        } else {
-             // Jika error masih terjadi, itu adalah masalah RPC atau Kunci Privat.
-            console.error("Detail Error (Kemungkinan Masalah Koneksi/Kunci):", error.message);
-        }
+        console.error("\n❌ GAGAL MINTING:", error.message);
+        // Kembalikan null agar server tidak crash
+        return null; 
     }
 }
-
 module.exports = { mintTicketsAutomatically };
