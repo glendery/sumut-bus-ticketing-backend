@@ -20,8 +20,8 @@ app.use(helmet());
 const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
-        user: 'naikajaa@gmail.com', 
-        pass: 'flyk zdky rmul pluu' 
+        user: process.env.EMAIL_USER, // <--- Ganti string email jadi ini
+        pass: process.env.EMAIL_PASS  // <--- Ganti password jadi ini
     }
 });
 
