@@ -396,5 +396,35 @@ app.post('/midtrans-notification', async (req, res) => {
         res.status(500).send('Error');
     }
 });
+app.get('/api/seats', async (req, res) => {
+  try {
+    const { date, destination } = req.query; 
+    
+    // Validasi input
+    if (!date || !destination) {
+      return res.status(400).json({ error: 'Tanggal dan tujuan harus diisi' });
+    }
 
+    // Cari semua tiket yang sukses dibayar (status: 'settlement' atau 'success')
+    // Sesuaikan nama field 'route', 'travelDate', 'status' dengan Schema MongoDB kamu
+    const tickets = await Ticket.find({
+      route: destination,     // Contoh: "Medan - Sibolga"
+      travelDate: date,       // Contoh: "2025-12-09"
+      // Opsional: Cek status pembayaran jika perlu
+      // status: 'settlement' 
+    });
+
+    // Ambil hanya nomor kursinya saja
+    const bookedSeats = tickets.map(ticket => ticket.seatNumber);
+
+    res.json({ 
+      success: true, 
+      bookedSeats: bookedSeats // Output: [2, 5, 12, ...]
+    });
+
+  } catch (error) {
+    console.error('Error fetching seats:', error);
+    res.status(500).json({ error: 'Gagal mengambil data kursi' });
+  }
+});
 app.listen(3000, () => console.log('🚀 Server MongoDB + Midtrans Ready di Port 3000'));
