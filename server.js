@@ -405,21 +405,20 @@ app.get('/api/seats', async (req, res) => {
       return res.status(400).json({ error: 'Tanggal dan tujuan harus diisi' });
     }
 
-    // Cari semua tiket yang sukses dibayar (status: 'settlement' atau 'success')
-    // Sesuaikan nama field 'route', 'travelDate', 'status' dengan Schema MongoDB kamu
-    const tickets = await Ticket.find({
-      route: destination,     // Contoh: "Medan - Sibolga"
-      travelDate: date,       // Contoh: "2025-12-09"
-      // Opsional: Cek status pembayaran jika perlu
-      // status: 'settlement' 
+    // Cari di tabel 'Order' (bukan Ticket)
+    // Filter status: Jangan ambil yang 'CANCEL' atau 'GAGAL'
+    const bookedOrders = await Order.find({
+      rute: destination,        // Sesuai field di database kamu ('rute')
+      tanggal: date,            // Sesuai field di database kamu ('tanggal')
+      status: { $nin: ['CANCEL', 'GAGAL'] } // Ambil yang LUNAS, PENDING, atau MINTED
     });
 
-    // Ambil hanya nomor kursinya saja
-    const bookedSeats = tickets.map(ticket => ticket.seatNumber);
+    // Ambil nomor kursinya saja
+    const bookedSeats = bookedOrders.map(order => parseInt(order.seatNumber));
 
     res.json({ 
       success: true, 
-      bookedSeats: bookedSeats // Output: [2, 5, 12, ...]
+      bookedSeats: bookedSeats 
     });
 
   } catch (error) {
