@@ -12,9 +12,54 @@ const { mintTicketsAutomatically } = require('./mintingService');
 const { User, Route, Order, Promo } = require('./models');
 
 const app = express();
+app.disable('x-powered-by')
 app.use(express.json());
-app.use(cors());
-app.use(helmet());
+const allowedOrigins = [
+    'https://sumut-bus-ticketing-frontend.vercel.app', // Domain Frontend Produksi
+    'http://localhost:5173', // Domain Lokal (saat dev)
+    'http://localhost:3000'
+];
+
+app.use(cors({
+    origin: function (origin, callback) {
+        // Izinkan request tanpa origin (seperti Postman atau mobile app)
+        if (!origin) return callback(null, true);
+        
+        if (allowedOrigins.indexOf(origin) === -1) {
+            var msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+            return callback(new Error(msg), false);
+        }
+        return callback(null, true);
+    },
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true // Izinkan cookie jika ada
+}));
+app.use(helmet({
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            // Izinkan script dari Midtrans dan Vercel
+            scriptSrc: ["'self'", "'unsafe-inline'", "https://app.sandbox.midtrans.com", "https://app.midtrans.com", "https://api.midtrans.com"],
+            // Izinkan koneksi ke API dan Blockchain
+            connectSrc: ["'self'", "https://app.sandbox.midtrans.com", "https://api.midtrans.com", "https://sepolia.infura.io", "https://eth-sepolia.g.alchemy.com"],
+            // Izinkan gambar dari berbagai sumber (logo bus, QR code)
+            imgSrc: ["'self'", "data:", "https://api.qrserver.com", "https://*.vercel.app"],
+            // Izinkan iframe (PENTING untuk Midtrans Snap Popup)
+            frameSrc: ["'self'", "https://app.sandbox.midtrans.com", "https://app.midtrans.com"],
+            upgradeInsecureRequests: [],
+        }
+    },
+    crossOriginResourcePolicy: { policy: "cross-origin" }, // Agar frontend bisa load gambar
+    hsts: {
+        maxAge: 31536000, // Paksa HTTPS selama 1 tahun
+        includeSubDomains: true,
+        preload: true
+    },
+    frameguard: {
+        action: 'deny' // Mencegah Clickjacking
+    }
+}));
 
 // --- [PENTING] KONFIGURASI EMAIL PENGIRIM ---
 const transporter = nodemailer.createTransport({
